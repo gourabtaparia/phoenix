@@ -69,6 +69,8 @@ import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.regionserver.ScanInfoUtil;
 import org.apache.hadoop.hbase.regionserver.ScanType;
+import org.apache.hadoop.hbase.regionserver.ScannerContext;
+import org.apache.hadoop.hbase.regionserver.ScannerContextUtil;
 import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.regionserver.StoreScanner;
 import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest;
@@ -547,6 +549,13 @@ public class UngroupedAggregateRegionObserver extends BaseScannerRegionObserver 
         Aggregator[] rowAggregators = null;
         final RegionScanner innerScanner = theScanner;
         final TenantCache tenantCache = GlobalCache.getTenantCache(env, ScanUtil.getTenantId(scan));
+        final ScannerContext groupScannerContext;
+        if (scan.isScanMetricsEnabled()) {
+            groupScannerContext = ScannerContext.newBuilder()
+                    .setTrackMetrics(scan.isScanMetricsEnabled()).build();
+        } else {
+            groupScannerContext = null;
+        }
         try (MemoryChunk em = tenantCache.getMemoryManager().allocate(0)) {
             aggregators = ServerAggregators.deserialize(
                     scan.getAttribute(BaseScannerRegionObserver.AGGREGATORS), conf, em);
@@ -582,7 +591,11 @@ public class UngroupedAggregateRegionObserver extends BaseScannerRegionObserver 
                     // Results are potentially returned even when the return value of s.next is false
                     // since this is an indication of whether or not there are more values after the
                     // ones returned
+                    if (groupScannerContext == null) {
                     hasMore = innerScanner.nextRaw(results);
+                    } else {
+                        hasMore = innerScanner.nextRaw(results, groupScannerContext);
+                    }
                     if (!results.isEmpty()) {
                         rowCount++;
                         result.setKeyValues(results);
@@ -870,6 +883,7 @@ public class UngroupedAggregateRegionObserver extends BaseScannerRegionObserver 
 
         RegionScanner scanner = new BaseRegionScanner(innerScanner) {
             private boolean done = !hadAny;
+            private ScannerContext scannerContextSummary = groupScannerContext;
 
             @Override
             public boolean isFilterDone() {
@@ -882,6 +896,22 @@ public class UngroupedAggregateRegionObserver extends BaseScannerRegionObserver 
                 done = true;
                 results.add(aggKeyValue);
                 return false;
+            }
+
+            @Override
+            public boolean next(List<Cell> results, ScannerContext scannerContext)
+                    throws IOException {
+                if (scannerContextSummary != null && scannerContext != null) {
+                    ScannerContextUtil.updateMetrics(scannerContextSummary, scannerContext);
+                    scannerContextSummary = null;
+                }
+                return next(results);
+            }
+
+            @Override
+            public boolean nextRaw(List<Cell> results, ScannerContext scannerContext)
+                    throws IOException {
+                return next(results, scannerContext);
             }
 
             @Override

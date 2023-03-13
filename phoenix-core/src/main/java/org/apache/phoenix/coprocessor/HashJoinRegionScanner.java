@@ -287,9 +287,19 @@ public class HashJoinRegionScanner implements RegionScanner {
 
     @Override
     public boolean nextRaw(List<Cell> result) throws IOException {
+        return nextRaw(result, null);
+    }
+
+    @Override
+    public boolean nextRaw(List<Cell> result, ScannerContext scannerContext)
+            throws IOException {
         try {
             while (shouldAdvance()) {
+                if (scannerContext == null) {
                 hasMore = scanner.nextRaw(result);
+                } else {
+                    hasMore = scanner.nextRaw(result, scannerContext);
+                }
                 processResults(result, false);
                 result.clear();
             }
@@ -299,12 +309,6 @@ public class HashJoinRegionScanner implements RegionScanner {
             ServerUtil.throwIOException(env.getRegion().getRegionInfo().getRegionNameAsString(), t);
             return false; // impossible
         }
-    }
-
-    @Override
-    public boolean nextRaw(List<Cell> result, ScannerContext scannerContext)
-            throws IOException {
-        throw new IOException("Next with scannerContext should not be called in Phoenix environment");
     }
 
     @Override
@@ -319,12 +323,13 @@ public class HashJoinRegionScanner implements RegionScanner {
 
     @Override
     public boolean next(List<Cell> result) throws IOException {
-        throw new IOException("Next should not be used in HashJoin scanner");
+        throw new IOException("Next with scannerContext should not be called in Phoenix environment");
     }
 
     @Override
     public boolean next(List<Cell> result, ScannerContext scannerContext) throws IOException {
-        throw new IOException("Next with scannerContext should not be called in Phoenix environment");
+        throw new DelegateRegionScanner.ScannerContextNextNotImplementedException
+                ("Next with scannerContext should not be called in Phoenix environment");
     }
 
     @Override

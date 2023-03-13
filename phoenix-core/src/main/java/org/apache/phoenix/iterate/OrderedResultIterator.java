@@ -30,6 +30,7 @@ import java.util.Queue;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.regionserver.ScannerContext;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.phoenix.execute.DescVarLengthFastByteComparisons;
 import org.apache.phoenix.expression.Expression;
@@ -141,6 +142,7 @@ public class OrderedResultIterator implements PeekingResultIterator {
     private final ResultIterator delegate;
     private final List<OrderByExpression> orderByExpressions;
     private final long estimatedByteSize;
+    private final boolean hasRegionScannerContext;
     
     private PeekingResultIterator resultIterator;
     private long byteSize;
@@ -185,6 +187,9 @@ public class OrderedResultIterator implements PeekingResultIterator {
         assert(limit == null || Long.MAX_VALUE / estimatedEntrySize >= limit + this.offset);
 
         this.estimatedByteSize = limit == null ? 0 : (limit + this.offset) * estimatedEntrySize;
+
+        // only called in #NonAggregateRegionScannerFactory.deserializeFromScan
+        this.hasRegionScannerContext = delegate instanceof RegionScannerResultIterator;
     }
 
     public Integer getLimit() {
@@ -277,6 +282,13 @@ public class OrderedResultIterator implements PeekingResultIterator {
         }
         
         return resultIterator;
+    }
+
+    public ScannerContext getRegionScannerContext() {
+        if (hasRegionScannerContext) {
+            return ((RegionScannerResultIterator)delegate).getRegionScannerContext();
+        }
+        return null;
     }
 
     @Override

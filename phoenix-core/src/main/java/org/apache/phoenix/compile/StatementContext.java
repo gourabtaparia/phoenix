@@ -47,6 +47,7 @@ import org.apache.phoenix.util.NumberUtil;
 import org.apache.phoenix.util.ReadOnlyProps;
 
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 
 /**
@@ -87,6 +88,7 @@ public class StatementContext {
     private final OverAllQueryMetrics overAllQueryMetrics;
     private QueryLogger queryLogger;
     private boolean isClientSideUpsertSelect;
+    private Set<StatementContext> subStatementContexts;
     
     public StatementContext(PhoenixStatement statement) {
         this(statement, new Scan());
@@ -140,6 +142,7 @@ public class StatementContext {
         this.readMetricsQueue = new ReadMetricQueue(isRequestMetricsEnabled,connection.getLogLevel());
         this.overAllQueryMetrics = new OverAllQueryMetrics(isRequestMetricsEnabled,connection.getLogLevel());
         this.retryingPersistentCache = Maps.<Long, Boolean> newHashMap();
+        this.subStatementContexts = Sets.newHashSet();
     }
 
     /**
@@ -346,5 +349,13 @@ public class StatementContext {
         } else {
             return retrying;
         }
+    }
+
+    public void addSubStatementContext(StatementContext sub) {
+        subStatementContexts.add(sub);
+    }
+
+    public Set<StatementContext> getSubStatementContexts() {
+        return subStatementContexts;
     }
 }

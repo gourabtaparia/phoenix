@@ -36,6 +36,8 @@ import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
+import org.apache.hadoop.hbase.regionserver.ScannerContext;
+import org.apache.hadoop.hbase.regionserver.ScannerContextUtil;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.phoenix.cache.GlobalCache;
 import org.apache.phoenix.cache.TenantCache;
@@ -163,7 +165,8 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
     }
     if (scanOffset != null) {
       innerScanner = getOffsetScanner(innerScanner, new OffsetResultIterator(
-              new RegionScannerResultIterator(innerScanner, getMinMaxQualifiersFromScan(scan), encodingScheme), scanOffset),
+              new RegionScannerResultIterator(scan, innerScanner, getMinMaxQualifiersFromScan(scan),
+                      encodingScheme), scanOffset),
           scan.getAttribute(QueryConstants.LAST_SCAN) != null);
     }
     boolean spoolingEnabled =
@@ -217,7 +220,8 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
         orderByExpressions.add(orderByExpression);
       }
       PTable.QualifierEncodingScheme encodingScheme = EncodedColumnsUtil.getQualifierEncodingScheme(scan);
-      ResultIterator inner = new RegionScannerResultIterator(s, EncodedColumnsUtil.getMinMaxQualifiersFromScan(scan), encodingScheme);
+      RegionScannerResultIterator inner = new RegionScannerResultIterator(scan, s,
+              EncodedColumnsUtil.getMinMaxQualifiersFromScan(scan), encodingScheme);
       return new OrderedResultIterator(inner, orderByExpressions, spoolingEnabled,
               thresholdBytes, limit >= 0 ? limit : null, null, estimatedRowSize);
     } catch (IOException e) {
@@ -293,6 +297,7 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
     }
     return new BaseRegionScanner(s) {
       private Tuple tuple = firstTuple;
+      private ScannerContext regionScannerContext = iterator.getRegionScannerContext();
 
       @Override
       public boolean isFilterDone() {
@@ -301,12 +306,38 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
 
       @Override
       public boolean next(List<Cell> results) throws IOException {
+        return next(results, null);
+      }
+
+      public boolean next(List<Cell> results, ScannerContext scannerContext) throws IOException {
         try {
           if (isFilterDone()) { return false; }
           for (int i = 0; i < tuple.size(); i++) {
             results.add(tuple.getValue(i));
           }
           tuple = iterator.next();
+          if (regionScannerContext != null) {
+            ScannerContextUtil.updateMetrics(regionScannerContext, scannerContext);
+            regionScannerContext = null;
+          }
+          return !isFilterDone();
+        } catch (Throwable t) {
+          ServerUtil.throwIOException(getRegion().getRegionInfo().getRegionNameAsString(), t);
+          return false;
+          }
+      }
+
+      public boolean nextRaw(List<Cell> results, ScannerContext scannerContext) throws IOException {
+        try {
+          if (isFilterDone()) { return false; }
+          for (int i = 0; i < tuple.size(); i++) {
+            results.add(tuple.getValue(i));
+          }
+          tuple = iterator.next();
+          if (regionScannerContext != null) {
+            ScannerContextUtil.updateMetrics(regionScannerContext, scannerContext);
+            regionScannerContext = null;
+          }
           return !isFilterDone();
         } catch (Throwable t) {
           ServerUtil.throwIOException(getRegion().getRegionInfo().getRegionNameAsString(), t);
@@ -361,6 +392,7 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
     }
     return new BaseRegionScanner(s) {
       private Tuple tuple = firstTuple;
+      private ScannerContext regionScannerContext = iterator.getRegionScannerContext();
 
       @Override
       public boolean isFilterDone() {
@@ -384,6 +416,21 @@ public class NonAggregateRegionScannerFactory extends RegionScannerFactory {
           ServerUtil.throwIOException(region.getRegionInfo().getRegionNameAsString(), t);
           return false;
         }
+      }
+
+      @Override
+      public boolean next(List<Cell> results, ScannerContext scannerContext) throws IOException {
+        // call next() first because the object regionScannerContext will be used inside.
+        boolean ret = next(results);
+        if (regionScannerContext != null && scannerContext != null) {
+          ScannerContextUtil.updateMetrics(regionScannerContext, scannerContext);
+        }
+        return ret;
+      }
+
+      @Override
+      public boolean nextRaw(List<Cell> results, ScannerContext scannerContext) throws IOException {
+        return next(results, scannerContext);
       }
 
       @Override

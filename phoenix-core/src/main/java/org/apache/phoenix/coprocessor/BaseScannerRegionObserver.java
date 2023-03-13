@@ -133,6 +133,7 @@ abstract public class BaseScannerRegionObserver extends BaseRegionObserver {
     // In case of Index Write failure, we need to determine that Index mutation
     // is part of normal client write or Index Rebuilder. # PHOENIX-5080
     public final static byte[] REPLAY_INDEX_REBUILD_WRITES = PUnsignedTinyint.INSTANCE.toBytes(3);
+
     public enum ReplayWrite {
         TABLE_AND_INDEX,
         INDEX_ONLY,
@@ -304,7 +305,7 @@ abstract public class BaseScannerRegionObserver extends BaseRegionObserver {
             @Override
             public boolean next(List<Cell> result, ScannerContext scannerContext) throws IOException {
                 overrideDelegate();
-                boolean res = super.next(result);
+                boolean res = super.next(result, scannerContext);
                 ScannerContextUtil.incrementSizeProgress(scannerContext, result);
                 ScannerContextUtil.updateTimeProgress(scannerContext);
                 return res;
@@ -319,7 +320,7 @@ abstract public class BaseScannerRegionObserver extends BaseRegionObserver {
             @Override
             public boolean nextRaw(List<Cell> result, ScannerContext scannerContext) throws IOException {
                 overrideDelegate();
-                boolean res = super.nextRaw(result);
+                boolean res = super.nextRaw(result, scannerContext);
                 ScannerContextUtil.incrementSizeProgress(scannerContext, result);
                 ScannerContextUtil.updateTimeProgress(scannerContext);
                 return res;

@@ -168,8 +168,18 @@ public abstract class RegionScannerFactory {
 
       @Override
       public boolean nextRaw(List<Cell> result) throws IOException {
+        return nextRaw(result, null);
+      }
+
+      @Override
+      public boolean nextRaw(List<Cell> result, ScannerContext scannerContext) throws IOException {
         try {
-          boolean next = s.nextRaw(result);
+          boolean next;
+          if (scannerContext == null) {
+            next = s.nextRaw(result);
+          } else {
+            next = s.nextRaw(result, scannerContext);
+          }
           Cell arrayElementCell = null;
           if (result.size() == 0) {
             return next;
@@ -210,6 +220,10 @@ public abstract class RegionScannerFactory {
             }
           }
           // There is a scanattribute set to retrieve the specific array element
+          if (scannerContext != null) {
+            ScannerContextUtil.incrementSizeProgress(scannerContext, result);
+            ScannerContextUtil.updateTimeProgress(scannerContext);
+          }
           return next;
         } catch (Throwable t) {
           ServerUtil.throwIOException(getRegion().getRegionInfo().getRegionNameAsString(), t);
@@ -268,15 +282,6 @@ public abstract class RegionScannerFactory {
           }
         }
         return new Pair<>(tuple, new byte[0]);
-      }
-
-      @Override
-      public boolean nextRaw(List<Cell> result, ScannerContext scannerContext)
-          throws IOException {
-        boolean res = next(result);
-        ScannerContextUtil.incrementSizeProgress(scannerContext, result);
-        ScannerContextUtil.updateTimeProgress(scannerContext);
-        return res;
       }
 
       /**

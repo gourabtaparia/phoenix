@@ -45,6 +45,8 @@ import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.regionserver.Region;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
+import org.apache.hadoop.hbase.regionserver.ScannerContext;
+import org.apache.hadoop.hbase.regionserver.ScannerContextUtil;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.io.WritableUtils;
@@ -409,6 +411,13 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
                         env, ScanUtil.getTenantId(scan), ScanUtil.getCustomAnnotations(scan),
                         aggregators, estDistVals);
         boolean success = false;
+        final ScannerContext groupScannerContext;
+        if (scan.isScanMetricsEnabled()) {
+            groupScannerContext = ScannerContext.newBuilder()
+                    .setTrackMetrics(scan.isScanMetricsEnabled()).build();
+        } else {
+            groupScannerContext = null;
+        }
         try {
             boolean hasMore;
             Tuple result = useQualifierAsIndex ? new PositionBasedMultiKeyValueTuple() : new MultiKeyValueTuple();
@@ -430,7 +439,11 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
                         // since this is an indication of whether or not there are
                         // more values after the
                         // ones returned
+                        if (groupScannerContext == null) {
                         hasMore = scanner.nextRaw(results);
+                        } else {
+                            hasMore = scanner.nextRaw(results, groupScannerContext);
+                        }
                         if (!results.isEmpty()) {
                             result.setKeyValues(results);
                             ImmutableBytesPtr key =
@@ -452,7 +465,34 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
             // (which can happen if we're basing our parallelization split
             // points on old metadata), we'll get incorrect query results.
             success = true;
-            return regionScanner;
+            return new BaseRegionScanner(regionScanner) {
+                private ScannerContext scannerContextSummary = groupScannerContext;
+
+                 @Override
+                 public boolean next(List<Cell> results) throws IOException {
+                     return next(results, null);
+                 }
+
+                 @Override
+                 public boolean next(List<Cell> results, ScannerContext scannerContext)
+                         throws IOException {
+                     if (scannerContextSummary != null && scannerContext != null) {
+                         ScannerContextUtil.updateMetrics(scannerContextSummary, scannerContext);
+                         scannerContextSummary = null;
+                     }
+                     return delegate.next(results);
+                 }
+
+                 @Override
+                 public boolean nextRaw(List<Cell> results, ScannerContext scannerContext)
+                         throws IOException {
+                     if (scannerContextSummary != null && scannerContext != null) {
+                         ScannerContextUtil.updateMetrics(scannerContextSummary, scannerContext);
+                         scannerContextSummary = null;
+                     }
+                     return delegate.nextRaw(results);
+                 }
+             };
         } finally {
             if (!success) {
                 Closeables.closeQuietly(groupByCache);
@@ -485,6 +525,10 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
 
             @Override
             public boolean next(List<Cell> results) throws IOException {
+                return next(results, null);
+            }
+            @Override
+            public boolean next(List<Cell> results, ScannerContext scannerContext) throws IOException {
                 boolean hasMore;
                 boolean atLimit;
                 boolean aggBoundary = false;
@@ -507,7 +551,11 @@ public class GroupedAggregateRegionObserver extends BaseScannerRegionObserver {
                             // since this is an indication of whether or not there
                             // are more values after the
                             // ones returned
+                            if (scannerContext == null) {
                             hasMore = scanner.nextRaw(kvs);
+                            } else {
+                                hasMore = scanner.nextRaw(kvs, scannerContext);
+                            }
                             if (!kvs.isEmpty()) {
                                 result.setKeyValues(kvs);
                                 key = TupleUtil.getConcatenatedValue(result, expressions);

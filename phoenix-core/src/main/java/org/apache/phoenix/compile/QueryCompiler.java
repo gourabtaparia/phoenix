@@ -116,12 +116,18 @@ public class QueryCompiler {
     private final boolean optimizeSubquery;
     private final Map<TableRef, QueryPlan> dataPlans;
     private final boolean costBased;
+    private final StatementContext parentContext;
 
     public QueryCompiler(PhoenixStatement statement, SelectStatement select, ColumnResolver resolver, boolean projectTuples, boolean optimizeSubquery, Map<TableRef, QueryPlan> dataPlans) throws SQLException {
         this(statement, select, resolver, Collections.<PDatum>emptyList(), null, new SequenceManager(statement), projectTuples, optimizeSubquery, dataPlans);
     }
 
     public QueryCompiler(PhoenixStatement statement, SelectStatement select, ColumnResolver resolver, List<? extends PDatum> targetColumns, ParallelIteratorFactory parallelIteratorFactory, SequenceManager sequenceManager, boolean projectTuples, boolean optimizeSubquery, Map<TableRef, QueryPlan> dataPlans) throws SQLException {
+        this(statement, select, resolver, targetColumns, parallelIteratorFactory, sequenceManager,
+            projectTuples, optimizeSubquery, dataPlans, null);
+    }
+
+    public QueryCompiler(PhoenixStatement statement, SelectStatement select, ColumnResolver resolver, List<? extends PDatum> targetColumns, ParallelIteratorFactory parallelIteratorFactory, SequenceManager sequenceManager, boolean projectTuples, boolean optimizeSubquery, Map<TableRef, QueryPlan> dataPlans, StatementContext parentContext) throws SQLException {
         this.statement = statement;
         this.select = select;
         this.resolver = resolver;
@@ -143,6 +149,7 @@ public class QueryCompiler {
         this.originalScan = ScanUtil.newScan(scan);
         this.optimizeSubquery = optimizeSubquery;
         this.dataPlans = dataPlans == null ? Collections.<TableRef, QueryPlan>emptyMap() : dataPlans;
+        this.parentContext = parentContext;
     }
 
     public QueryCompiler(PhoenixStatement statement, SelectStatement select, ColumnResolver resolver, List<? extends PDatum> targetColumns, ParallelIteratorFactory parallelIteratorFactory, SequenceManager sequenceManager) throws SQLException {
@@ -255,6 +262,9 @@ public class QueryCompiler {
     public QueryPlan compileSelect(SelectStatement select) throws SQLException{
         List<Object> binds = statement.getParameters();
         StatementContext context = new StatementContext(statement, resolver, scan, sequenceManager);
+        if (parentContext != null) {
+            parentContext.addSubStatementContext(context);
+        }
         if (select.isJoin()) {
             JoinTable joinTable = JoinCompiler.compile(statement, select, context.getResolver());
             return compileJoinQuery(context, binds, joinTable, false, false, null);
@@ -614,6 +624,10 @@ public class QueryCompiler {
     }
 
     protected QueryPlan compileSubquery(SelectStatement subquery, boolean pushDownMaxRows) throws SQLException {
+        return compileSubquery(subquery, pushDownMaxRows, null);
+    }
+
+    protected QueryPlan compileSubquery(SelectStatement subquery, boolean pushDownMaxRows, StatementContext parentContext) throws SQLException {
         PhoenixConnection connection = this.statement.getConnection();
         subquery = SubselectRewriter.flatten(subquery, connection);
         ColumnResolver resolver = FromCompiler.getResolverForQuery(subquery, connection);
@@ -628,6 +642,9 @@ public class QueryCompiler {
         QueryPlan plan = new QueryCompiler(this.statement, subquery, resolver, false, optimizeSubquery, null).compile();
         if (optimizeSubquery) {
             plan = statement.getConnection().getQueryServices().getOptimizer().optimize(statement, plan);
+        }
+        if (parentContext != null) {
+            parentContext.addSubStatementContext(plan.getContext());
         }
         this.statement.setMaxRows(maxRows); // restore maxRows.
         return plan;
@@ -644,7 +661,7 @@ public class QueryCompiler {
             throw new SQLException("RVC Offset not allowed with subqueries.");
         }
 
-        QueryPlan innerPlan = compileSubquery(innerSelect, false);
+        QueryPlan innerPlan = compileSubquery(innerSelect, false, context);
         RowProjector innerQueryPlanRowProjector = innerPlan.getProjector();
         TupleProjector tupleProjector = new TupleProjector(innerQueryPlanRowProjector);
 
